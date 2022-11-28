@@ -1,3 +1,9 @@
+- platform: integration
+  source: sensor.general
+  name: consumo_total_casa_kwh
+  unit_prefix: k
+  round: 2
+  
 - platform: template
   sensors:
     general_kw:
