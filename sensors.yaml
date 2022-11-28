@@ -1,0 +1,45 @@
+- platform: template
+  sensors:
+    general_kw:
+      value_template: "{{(states('sensor.general')        | float / 1000 +
+        states('sensor.cargador_power') | float /1000  +
+        states('sensor.enchufes_power') | float /1000 +
+        states('sensor.puerta_power')   | float /1000) | round(2) }}"
+      unit_of_measurement: "kW"
+      device_class: energy
+      friendly_name: "General kW"
+    general_casa_kw:
+      value_template: "{{(states('sensor.general') | float / 1000) | round(2) }}"
+      unit_of_measurement: "kW"
+      device_class: energy
+      friendly_name: "General casa kW"
+    general_amp_total:
+      value_template: "{{(states('sensor.general_amp') | float  + states('sensor.cargador_current') | float  + states('sensor.enchufes_current') | float + states('sensor.puerta_current') | float ) | round(2) }}"
+      unit_of_measurement: "A"
+      device_class: energy
+      friendly_name: "General Amperios"
+    cargador_usage_this_session_kwh:
+      # Pasar de kWh a Wh para el panel de energía
+      value_template: "{{(states('sensor.cargador_usage_this_session') | float ) | round(2) }}"
+      unit_of_measurement: "KWh"
+      device_class: energy
+      friendly_name: "Cargador coche KWh"
+    pvpc_tramo:
+      friendly_name: "Tramo eléctrico"
+      icon_template: mdi:timetable
+      value_template: "{{ state_attr('sensor.pvpc', 'period') }}"
+    carga_coche_amp_auto_reader:
+      friendly_name: "Amperios disponibles"
+      icon_template: mdi:home-lightning-bolt
+      unit_of_measurement: "A"
+      value_template: "{{(states('input_number.carga_coche_amp_auto') | float) | round(2)}}"
+    general_garaje_kw:
+      value_template: "{{(states('sensor.cargador_power')| float /1000  + states('sensor.enchufes_power') | float /1000  + states('sensor.puerta_power') | float /1000) | round(2) }}"
+      unit_of_measurement: "kW"
+      device_class: energy
+      friendly_name: "General garaje kW"
+    general_garaje_amp:
+      value_template: "{{(states('sensor.cargador_current')| float  + states('sensor.enchufes_current') | float   + states('sensor.puerta_current') | float ) | round(2) }}"
+      unit_of_measurement: "A"
+      device_class: energy
+      friendly_name: "General garaje Amperios"
