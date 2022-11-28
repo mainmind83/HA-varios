@@ -1,0 +1,23 @@
+switch:
+  - platform: template
+    switches:
+      cargador_coche_plantilla:
+        value_template: "{{ is_state('input_select.tipo_de_carga_coche', 'Auto') }}"
+        turn_on:
+          service: input_select.select_option
+          data:
+            option: Auto
+          target:
+            entity_id: input_select.tipo_de_carga_coche
+        turn_off:
+          service: input_select.select_option
+          data:
+            option: Apagado
+          target:
+            entity_id: input_select.tipo_de_carga_coche
+        icon_template: >-
+          {% if is_state('input_select.tipo_de_carga_coche', 'Auto') %}
+            mdi:battery-charging-40
+          {% else %}
+            mdi:battery-20
+          {% endif %}
