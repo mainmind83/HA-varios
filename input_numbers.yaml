@@ -1,0 +1,18 @@
+# En archivo separado de configuration.yaml
+# input_number: !include input_number.yaml
+
+# Panel coche eléctrico
+carga_coche_amp_auto:
+  name: Carga coche (A) Auto
+  unit_of_measurement: A
+  initial: 6
+  min: 6
+  max: 20
+  step: 1
+carga_coche_amp:
+  name: Carga coche (A)
+  unit_of_measurement: A
+  initial: 6
+  min: 6
+  max: 20
+  step: 1
