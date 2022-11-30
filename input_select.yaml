@@ -1,0 +1,12 @@
+# En archivo separado de configuration.yaml
+# input_select: !include input_select.yaml
+
+# Panel coche eléctrico
+tipo_de_carga_coche:
+  name: Tipo de carga coche
+  options:
+    - Apagado
+    - Manual
+    - Auto
+  initial: Apagado
+  icon: mdi:car-arrow-left
