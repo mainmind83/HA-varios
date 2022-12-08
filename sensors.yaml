@@ -42,7 +42,7 @@
         {% if is_state('input_select.tipo_de_carga_coche', 'Apagado') %}
           ---
         {% else %}
-          "{{(states('input_number.carga_coche_amp_auto') | float) | round(2)}}"
+          {{(states('input_number.carga_coche_amp_auto') | float) | round(2)}}
         {% endif %}
     general_garaje_kw:
       value_template: "{{(states('sensor.cargador_power')| float /1000  + states('sensor.enchufes_power') | float /1000  + states('sensor.puerta_power') | float /1000) | round(2) }}"
