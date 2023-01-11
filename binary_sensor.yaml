@@ -1,0 +1,16 @@
+- platform: template
+  sensors:
+    banio_movimiento:
+      friendly_name: Sensor movimiento baño
+      value_template: >-
+        {% if is_state('switch.banio_ventilacion_l1', 'on') %}
+          True
+        {% else %}
+          False
+        {% endif %}
+      icon_template: >-
+        {% if is_state('switch.banio_ventilacion_l1', 'on') %}
+          mdi:motion-sensor
+        {% else %}
+          mdi:motion-sensor-off
+        {% endif %}
