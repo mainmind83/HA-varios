@@ -8,7 +8,7 @@ Configuración de sensores e integraciones en Home Assistant
 
 [Extractores de aire](https://www.mainmind.com/blog/extractores-en-homeassistant/)
 
-[Auto calibración de persianas en modulos Zigbee2MQTT para Home Assistant con solo un tiempo de actuación configurable](https://www.mainmind.com/blog/autocalibrar-persianas-en-home-assistant/)
+[Auto calibración de persianas Zigbee2MQTT con un solo tiempo de actuación configurable](https://www.mainmind.com/blog/autocalibrar-persianas-en-home-assistant/)
 
 
 
