@@ -1,0 +1,38 @@
+alias: auto_calibrar_salon_persiana_1
+description: ''
+trigger:
+  - platform: device
+    device_id: f55a9fbf00000000000
+    domain: cover
+    entity_id: cover.0x00000000000
+    type: opened
+    for:
+      hours: 0
+      minutes: 0
+      seconds: 10
+condition:
+  - condition: time
+    after: '09:00:00'
+    before: '21:00:00'
+    weekday:
+      - sun
+      - sat
+      - fri
+      - thu
+      - wed
+      - tue
+      - mon
+  - condition: template
+    value_template: >-
+      {{ state_attr('automation.auto_calibrar_salon_persiana_1',
+      'last_triggered') | default(today_at(), true) < today_at('09:00') }}
+  - condition: device
+    device_id: f55a9fbf00000000000
+    domain: cover
+    entity_id: cover.0x00000000000
+    type: is_position
+    above: 90
+action:
+  - service: script.calibrar_comedor_persiana_1
+    data: {}
+mode: single

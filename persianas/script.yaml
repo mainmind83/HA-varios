@@ -1,0 +1,29 @@
+alias: Calibrar - salon_persiana_1
+sequence:
+  - device_id: f55a9fbf00000000000
+    domain: cover
+    entity_id: cover.0x00000000000
+    type: set_position
+    position: 100
+  - delay:
+      hours: 0
+      minutes: 0
+      seconds: 40
+      milliseconds: 0
+  - device_id: f55a9fbf00000000000
+    domain: number
+    entity_id: number.0x00000000000
+    type: set_value
+    value: 34
+  - device_id: f55a9fbf00000000000
+    domain: number
+    entity_id: number.0x00000000000
+    type: set_value
+    value: 35
+  - device_id: f55a9fbf00000000000
+    domain: cover
+    entity_id: cover.0x00000000000
+    type: set_position
+    position: 100
+mode: single
+icon: mdi:curtains
