@@ -24,8 +24,8 @@ condition:
       - mon
   - condition: template
     value_template: >-
-      {{ state_attr('automation.auto_calibrar_salon_persiana_1',
-      'last_triggered') | default(today_at(), true) < today_at('09:00') }}
+      {{ now() - state_attr('automation.auto_calibrar_salon_persiana_1',
+      'last_triggered').astimezone() > timedelta(minutes=30) }}
   - condition: device
     device_id: f55a9fbf00000000000
     domain: cover
