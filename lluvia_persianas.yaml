@@ -1,0 +1,340 @@
+blueprint:
+  name: Lluvia - Bajar persianas
+  description: >
+    Consulta la previsión de lluvia y baja las persianas para proteger los
+    cristales. Puede preguntar confirmación, actuar automáticamente, y
+    notificar cuando deje de llover para subirlas.
+
+    Versión: 1.2.0
+    Más información: https://www.mainmind.com
+  domain: automation
+  homeassistant:
+    min_version: "2024.6.0"
+  input:
+    weather_entity:
+      name: Entidad meteorológica
+      selector:
+        entity:
+          domain: weather
+
+    covers:
+      name: Persianas
+      description: Persianas que se moverán.
+      selector:
+        target:
+          entity:
+            domain: cover
+
+    reference_cover:
+      name: Persiana de referencia
+      description: >
+        Una de las persianas del grupo, usada para detectar si ya están
+        en posición lluvia.
+      selector:
+        entity:
+          domain: cover
+
+    cover_position_pct:
+      name: Posición de protección
+      description: >
+        Seleccione el porcentaje en función de su configuración de persianas.
+        Active la opción de lógica invertida si su integración usa el sentido
+        contrario al estándar.
+      default: 70
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+
+    inverted_covers:
+      name: Persianas con lógica invertida
+      description: >
+        Activa si tu integración usa el sentido contrario al estándar de HA.
+        Con esta opción activada se enviará el valor directamente sin invertir.
+      default: false
+      selector:
+        boolean:
+
+    precipitation_threshold:
+      name: Precipitación mínima para actuar
+      description: >
+        Milímetros de lluvia previstos en la próxima hora a partir de los cuales se actúa.
+        Met.no proporciona mm de precipitación, no porcentaje de probabilidad.
+
+        Referencia orientativa:
+        - Llovizna:        0.1 – 0.5 mm/h
+        - Lluvia débil:    0.5 – 2.0 mm/h  ← recomendado
+        - Lluvia moderada: 2.0 – 10 mm/h
+        - Lluvia intensa:  > 10 mm/h
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 10.0
+          step: 0.1
+          unit_of_measurement: "mm/h"
+
+    forecast_hours:
+      name: Horas de previsión a consultar
+      description: >
+        Número de horas hacia adelante. 1h para máxima reactividad.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 12
+          step: 1
+          unit_of_measurement: "h"
+
+    ask_confirmation:
+      name: Preguntar antes de bajar
+      description: >
+        Si se activa, envía notificación pidiendo confirmación antes de bajar.
+        Si se desactiva, las persianas bajan automáticamente.
+      default: true
+      selector:
+        boolean:
+
+    ask_when_stopped:
+      name: Preguntar cuando deje de llover
+      description: >
+        Si se activa, envía notificación preguntando si subir las persianas
+        cuando la precipitación baje del umbral.
+        Si se desactiva, las persianas suben automáticamente.
+      default: true
+      selector:
+        boolean:
+
+    cooldown_hours:
+      name: Horas mínimas entre notificaciones de bajada
+      description: Evita preguntar repetidamente si sigue lloviendo.
+      default: 4
+      selector:
+        number:
+          min: 1
+          max: 24
+          step: 1
+          unit_of_measurement: "h"
+
+    no_molestar_schedule:
+      name: Horario "no molestar"
+      description: No se enviará ninguna notificación mientras este horario esté activo.
+      selector:
+        entity:
+          domain: schedule
+
+    notification_service:
+      name: Servicio de notificación
+      description: >
+        Escribe el nombre completo del servicio, por ejemplo:
+        notify.moviles_de_la_granja, notify.mobile_app_mi_telefono
+      default: notify.
+      selector:
+        text:
+
+    response_timeout:
+      name: Minutos máximos esperando respuesta
+      description: >
+        Tiempo máximo esperando confirmación antes de cancelar.
+        No tiene sentido que supere el intervalo de consulta (30 min).
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: "min"
+
+    test_mode:
+      name: "⚠️ Modo pruebas"
+      description: >
+        SOLO PARA PRUEBAS. Desactiva las 3 restricciones de la automatización:
+        umbral de precipitación, cooldown entre notificaciones y horario no molestar.
+        La automatización se disparará en cada ciclo de 30 minutos independientemente
+        de la lluvia prevista. DESACTIVAR una vez finalizadas las pruebas.
+      default: false
+      selector:
+        boolean:
+
+triggers:
+  - trigger: time_pattern
+    minutes: "/30"
+
+actions:
+  # 1. Obtener previsión horaria
+  - action: weather.get_forecasts
+    target:
+      entity_id: !input weather_entity
+    data:
+      type: hourly
+    response_variable: prevision
+
+  # 2. Variables calculadas una sola vez
+  - variables:
+      weather_id: !input weather_entity
+      hours: !input forecast_hours
+      threshold: !input precipitation_threshold
+      closed_pct: !input cover_position_pct
+      inverted: !input inverted_covers
+      ref_cover: !input reference_cover
+      ask: !input ask_confirmation
+      ask_stop: !input ask_when_stopped
+      cooldown: !input cooldown_hours
+      timeout_min: !input response_timeout
+      test: !input test_mode
+      no_molestar: !input no_molestar_schedule
+      # Valor real a enviar al cover según lógica:
+      # Estándar HA: 100=abierta → para X% cerrada enviamos (100-X)
+      # Invertido:   100=cerrada → para X% cerrada enviamos X directamente
+      actual_position: >-
+        {{ closed_pct | int if inverted else (100 - closed_pct) | int }}
+      # Precipitación máxima en el período consultado (mm)
+      max_precip: >-
+        {% set horas = prevision[weather_id]['forecast'][:hours | int] %}
+        {{ horas | map(attribute='precipitation') | map('float', 0) | max }}
+      # ¿La persiana de referencia está ya en posición lluvia?
+      cover_at_rain_pos: >-
+        {{ state_attr(ref_cover, 'current_position') | int(-1) == actual_position | int }}
+      # Aviso en notificación si la lógica está invertida
+      mode_note: >-
+        {{ '(lógica invertida)' if inverted else '' }}
+      # Aviso en notificación si está en modo pruebas
+      test_note: >-
+        {{ '⚠️ MODO PRUEBAS ACTIVO — ' if test else '' }}
+
+  - choose:
+
+      # ── PATH A: Va a llover, persianas NO están en posición lluvia ──
+      - conditions:
+          - "{{ test or states(no_molestar) == 'off' }}"
+          - "{{ test or max_precip | float(0) > threshold | float }}"
+          - "{{ not cover_at_rain_pos }}"
+          - "{{ test or
+                this.attributes.last_triggered is none or
+                (now() - this.attributes.last_triggered.astimezone()).total_seconds()
+                > (cooldown | int * 3600) }}"
+        sequence:
+          - choose:
+              # Con confirmación: pregunta y espera respuesta
+              - conditions:
+                  - "{{ ask }}"
+                sequence:
+                  - action: !input notification_service
+                    data:
+                      title: "🌧️ Va a llover"
+                      message: >-
+                        {{ test_note }}Precipitación prevista: {{ max_precip }} mm
+                        en la{{ 's' if hours | int > 1 }}
+                        próxima{{ 's' if hours | int > 1 }} {{ hours }}h.
+                        ¿Bajo las persianas al {{ closed_pct }}%?
+                      data:
+                        tag: lluvia_persianas
+                        timeout: "{{ timeout_min | int * 60 }}"
+                        actions:
+                          - action: BAJAR_LLUVIA
+                            title: "✅ Sí, bajar"
+                          - action: NO_BAJAR_LLUVIA
+                            title: "❌ No"
+                  - wait_for_trigger:
+                      - trigger: event
+                        event_type: mobile_app_notification_action
+                        event_data:
+                          action: BAJAR_LLUVIA
+                      - trigger: event
+                        event_type: mobile_app_notification_action
+                        event_data:
+                          action: NO_BAJAR_LLUVIA
+                    timeout:
+                      minutes: "{{ timeout_min | int }}"
+                    continue_on_timeout: false
+                  - condition: template
+                    value_template: >-
+                      {{ wait.trigger is not none and
+                         wait.trigger.event.data.action == 'BAJAR_LLUVIA' }}
+                  - action: cover.set_cover_position
+                    target: !input covers
+                    data:
+                      position: "{{ actual_position }}"
+                  - action: !input notification_service
+                    data:
+                      title: "🪟 Persianas bajadas"
+                      message: >-
+                        {{ test_note }}Persianas al {{ closed_pct }}% por lluvia. {{ mode_note }}
+                      data:
+                        tag: lluvia_persianas
+                        timeout: 300
+            # Sin confirmación: actúa directamente y notifica
+            default:
+              - action: cover.set_cover_position
+                target: !input covers
+                data:
+                  position: "{{ actual_position }}"
+              - action: !input notification_service
+                data:
+                  title: "🌧️ Persianas bajadas automáticamente"
+                  message: >-
+                    {{ test_note }}Lluvia prevista {{ max_precip }} mm —
+                    persianas al {{ closed_pct }}%. {{ mode_note }}
+                  data:
+                    tag: lluvia_persianas
+                    timeout: 60
+
+      # ── PATH B: Ha dejado de llover, persianas EN posición lluvia ──
+      - conditions:
+          - "{{ test or states(no_molestar) == 'off' }}"
+          - "{{ test or max_precip | float(0) <= threshold | float }}"
+          - "{{ cover_at_rain_pos }}"
+        sequence:
+          - choose:
+              # Con confirmación: pregunta y espera respuesta
+              - conditions:
+                  - "{{ ask_stop }}"
+                sequence:
+                  - action: !input notification_service
+                    data:
+                      title: "☀️ Ha dejado de llover"
+                      message: >-
+                        {{ test_note }}Precipitación prevista: {{ max_precip }} mm.
+                        ¿Subo las persianas?
+                      data:
+                        tag: lluvia_persianas
+                        timeout: "{{ timeout_min | int * 60 }}"
+                        actions:
+                          - action: SUBIR_LLUVIA
+                            title: "✅ Sí, subir"
+                          - action: NO_SUBIR_LLUVIA
+                            title: "❌ No"
+                  - wait_for_trigger:
+                      - trigger: event
+                        event_type: mobile_app_notification_action
+                        event_data:
+                          action: SUBIR_LLUVIA
+                      - trigger: event
+                        event_type: mobile_app_notification_action
+                        event_data:
+                          action: NO_SUBIR_LLUVIA
+                    timeout:
+                      minutes: "{{ timeout_min | int }}"
+                    continue_on_timeout: false
+                  - condition: template
+                    value_template: >-
+                      {{ wait.trigger is not none and
+                         wait.trigger.event.data.action == 'SUBIR_LLUVIA' }}
+                  - action: cover.open_cover
+                    target: !input covers
+            # Sin confirmación: sube directamente y notifica
+            default:
+              - action: cover.open_cover
+                target: !input covers
+              - action: !input notification_service
+                data:
+                  title: "☀️ Persianas subidas automáticamente"
+                  message: >-
+                    {{ test_note }}Ha dejado de llover ({{ max_precip }} mm) — persianas subidas.
+                  data:
+                    tag: lluvia_persianas
+                    timeout: 60
+
+mode: single
