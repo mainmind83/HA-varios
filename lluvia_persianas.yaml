@@ -5,8 +5,8 @@ blueprint:
     cristales. Puede preguntar confirmación, actuar automáticamente, y
     notificar cuando deje de llover para subirlas.
 
-    Versión: 1.2.0
-    Más información: https://www.mainmind.com
+    Versión: 1.2.1
+    Más información: https://www.mainmind.com/blog/automatizar-persianas-prevision-de-lluvia/
   domain: automation
   homeassistant:
     min_version: "2024.6.0"
