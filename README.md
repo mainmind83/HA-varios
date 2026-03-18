@@ -10,5 +10,5 @@ Configuración de sensores e integraciones en Home Assistant
 
 [Auto calibración de persianas Zigbee2MQTT con un solo tiempo de actuación configurable](https://www.mainmind.com/blog/autocalibrar-persianas-en-home-assistant/)
 
-
+[Auomatizar persinas con previsión de lluvia](https://www.mainmind.com/blog/automatizar-persianas-prevision-de-lluvia/)
 
