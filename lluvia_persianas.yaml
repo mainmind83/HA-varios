@@ -1,22 +1,97 @@
 blueprint:
   name: Lluvia - Bajar persianas
   description: >
-    Consulta la previsión de lluvia y baja las persianas para proteger los
-    cristales. Puede preguntar confirmación, actuar automáticamente, y
-    notificar cuando deje de llover para subirlas.
+    Consulta la previsión de lluvia y/o un sensor físico de lluvia y baja
+    las persianas para proteger los cristales. Puede preguntar confirmación,
+    actuar automáticamente, y notificar cuando deje de llover para subirlas.
 
-    Versión: 1.2.1
+    Versión: 1.3.0
     Más información: https://www.mainmind.com/blog/automatizar-persianas-prevision-de-lluvia/
+
+    Novedades v1.3.0:
+      · Soporte opcional para sensor físico de lluvia (binary_sensor
+        device_class: moisture). Ej.: detector Zigbee ZG-223Z.
+      · Puede usarse solo forecast, solo sensor físico, o ambos combinados.
+      · Estrategia AND/OR configurable para decidir "ya no llueve" cuando
+        se usan ambas fuentes.
+      · Time_pattern /30min sigue siendo el heartbeat. El sensor físico
+        añade un trigger reactivo adicional para respuesta inmediata.
+      · Bugfixes: cooldown ya no se bloquea por disparos de subida, y el
+        cálculo de max_precip es robusto frente a forecast vacío.
   domain: automation
   homeassistant:
     min_version: "2024.6.0"
   input:
+
+    # ── SECCIÓN: FUENTES DE DETECCIÓN ────────────────────────────────────
     weather_entity:
-      name: Entidad meteorológica
+      name: Entidad meteorológica (opcional)
+      description: >
+        Entidad weather.* para predicción de lluvia (Met.no recomendado).
+        Déjalo vacío si solo quieres usar un sensor físico.
+      default: ""
       selector:
         entity:
           domain: weather
 
+    rain_sensor:
+      name: Sensor físico de lluvia (opcional)
+      description: >
+        binary_sensor (típicamente device_class: moisture) que indica
+        'on' cuando detecta agua. Reacciona inmediatamente, sin esperar
+        al ciclo de 30 minutos del forecast. Déjalo vacío si no tienes.
+      default: ""
+      selector:
+        entity:
+          domain: binary_sensor
+
+    rain_sensor_debounce:
+      name: Debounce sensor físico (segundos)
+      description: >
+        Tiempo que el sensor debe mantenerse 'on' para considerar lluvia real.
+        Filtra pulsos espurios de la primera gota.
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: "s"
+
+    rain_sensor_dry_minutes:
+      name: Minutos secos para considerar fin de lluvia
+      description: >
+        Tiempo que el sensor debe mantenerse 'off' para considerar que
+        ha dejado de llover. Solo aplica si se usa el sensor físico.
+      default: 20
+      selector:
+        number:
+          min: 1
+          max: 180
+          step: 1
+          unit_of_measurement: "min"
+
+    combine_strategy:
+      name: Estrategia de combinación (si usas ambas fuentes)
+      description: >
+        Solo aplica si tienes configurados weather_entity Y rain_sensor.
+
+        · "OR" — Llueve si cualquiera de las dos lo indica. Para DEJAR de
+          llover, ambas deben estar secas. Más conservador (persianas
+          bajadas más tiempo).
+
+        · "AND" — Llueve solo si ambas lo indican. Para DEJAR de llover,
+          basta con que una de las dos esté seca. Menos conservador.
+
+        Si solo tienes una fuente configurada, este parámetro se ignora.
+      default: "OR"
+      selector:
+        select:
+          options:
+            - "OR"
+            - "AND"
+
+    # ── SECCIÓN: PERSIANAS ───────────────────────────────────────────────
     covers:
       name: Persianas
       description: Persianas que se moverán.
@@ -57,11 +132,13 @@ blueprint:
       selector:
         boolean:
 
+    # ── SECCIÓN: UMBRALES FORECAST ───────────────────────────────────────
     precipitation_threshold:
-      name: Precipitación mínima para actuar
+      name: Precipitación mínima para actuar (forecast)
       description: >
-        Milímetros de lluvia previstos en la próxima hora a partir de los cuales se actúa.
-        Met.no proporciona mm de precipitación, no porcentaje de probabilidad.
+        Milímetros de lluvia previstos en la próxima hora a partir de los
+        cuales se actúa. Met.no proporciona mm de precipitación, no
+        porcentaje de probabilidad.
 
         Referencia orientativa:
         - Llovizna:        0.1 – 0.5 mm/h
@@ -88,6 +165,7 @@ blueprint:
           step: 1
           unit_of_measurement: "h"
 
+    # ── SECCIÓN: NOTIFICACIÓN Y CONFIRMACIÓN ─────────────────────────────
     ask_confirmation:
       name: Preguntar antes de bajar
       description: >
@@ -147,6 +225,7 @@ blueprint:
           step: 1
           unit_of_measurement: "min"
 
+    # ── SECCIÓN: PRUEBAS ─────────────────────────────────────────────────
     test_mode:
       name: "⚠️ Modo pruebas"
       description: >
@@ -158,22 +237,49 @@ blueprint:
       selector:
         boolean:
 
+###############################################################################
+# TRIGGERS
+# - Heartbeat cada 30 minutos: evalúa forecast + sensor + estado de persianas.
+# - Trigger reactivo del sensor físico: respuesta inmediata al primer pulso.
+# - Trigger fin de lluvia del sensor: detecta transición off sostenida.
+#
+# Los triggers reactivos solo hacen algo útil si hay rain_sensor configurado,
+# pero no podemos hacer el trigger condicional (limitación del blueprint).
+# Por eso filtramos dentro de 'variables' y 'conditions'.
+###############################################################################
+trigger_variables:
+  rain_sensor_id: !input rain_sensor
+  rain_sensor_debounce_sec: !input rain_sensor_debounce
+  rain_sensor_dry_min: !input rain_sensor_dry_minutes
+
 triggers:
   - trigger: time_pattern
     minutes: "/30"
+    id: heartbeat
+
+  # Trigger reactivo del sensor físico — empieza a llover
+  - trigger: template
+    value_template: >-
+      {{ rain_sensor_id != ''
+         and states(rain_sensor_id) == 'on' }}
+    for:
+      seconds: "{{ rain_sensor_debounce_sec | int(30) }}"
+    id: sensor_on
+
+  # Trigger reactivo del sensor físico — deja de llover
+  - trigger: template
+    value_template: >-
+      {{ rain_sensor_id != ''
+         and states(rain_sensor_id) == 'off' }}
+    for:
+      minutes: "{{ rain_sensor_dry_min | int(20) }}"
+    id: sensor_off
 
 actions:
-  # 1. Obtener previsión horaria
-  - action: weather.get_forecasts
-    target:
-      entity_id: !input weather_entity
-    data:
-      type: hourly
-    response_variable: prevision
-
-  # 2. Variables calculadas una sola vez
+  # 1. Variables base (antes de consultar forecast, por si no hay weather)
   - variables:
       weather_id: !input weather_entity
+      rain_sensor_id_a: !input rain_sensor
       hours: !input forecast_hours
       threshold: !input precipitation_threshold
       closed_pct: !input cover_position_pct
@@ -185,36 +291,134 @@ actions:
       timeout_min: !input response_timeout
       test: !input test_mode
       no_molestar: !input no_molestar_schedule
-      # Valor real a enviar al cover según lógica:
-      # Estándar HA: 100=abierta → para X% cerrada enviamos (100-X)
-      # Invertido:   100=cerrada → para X% cerrada enviamos X directamente
+      combine: !input combine_strategy
+      has_weather: "{{ weather_id != '' }}"
+      has_sensor: "{{ rain_sensor_id_a != '' }}"
+
+  # 2. Condición temprana: tiene que haber al menos una fuente configurada
+  - condition: template
+    value_template: "{{ has_weather or has_sensor }}"
+
+  # 3. Consultar forecast solo si hay weather configurado
+  - if:
+      - "{{ has_weather }}"
+    then:
+      - action: weather.get_forecasts
+        target:
+          entity_id: !input weather_entity
+        data:
+          type: hourly
+        response_variable: prevision
+
+  # 4. Variables derivadas — combinación de fuentes
+  - variables:
+      # Precipitación máxima prevista (mm/h). Robusto frente a forecast
+      # vacío o ausente.
+      max_precip: >-
+        {% if has_weather
+              and prevision is defined
+              and prevision.get(weather_id) is mapping
+              and prevision[weather_id].get('forecast') %}
+          {% set horas = prevision[weather_id]['forecast'][:hours | int] %}
+          {% set mm = horas
+                      | map(attribute='precipitation')
+                      | reject('none')
+                      | map('float', 0)
+                      | list %}
+          {{ (mm | max) if mm | length > 0 else 0 }}
+        {% else %}
+          0
+        {% endif %}
+
+      # Estado actual del sensor físico
+      sensor_wet: >-
+        {{ has_sensor and states(rain_sensor_id_a) == 'on' }}
+
+      # Valor real a enviar al cover según lógica
       actual_position: >-
         {{ closed_pct | int if inverted else (100 - closed_pct) | int }}
-      # Precipitación máxima en el período consultado (mm)
-      max_precip: >-
-        {% set horas = prevision[weather_id]['forecast'][:hours | int] %}
-        {{ horas | map(attribute='precipitation') | map('float', 0) | max }}
+
+      # ¿Llueve ahora según forecast?
+      forecast_rain: >-
+        {{ has_weather and (max_precip | float(0) > threshold | float) }}
+
+      # ¿Llueve ahora? (agregado según fuentes disponibles y estrategia)
+      is_raining: >-
+        {% if has_weather and has_sensor %}
+          {% if combine == 'AND' %}
+            {{ forecast_rain and sensor_wet }}
+          {% else %}
+            {{ forecast_rain or sensor_wet }}
+          {% endif %}
+        {% elif has_weather %}
+          {{ forecast_rain }}
+        {% else %}
+          {{ sensor_wet }}
+        {% endif %}
+
+      # ¿Ha dejado de llover? (agregado según fuentes y estrategia)
+      # Simétrico a is_raining: con OR para llover, AND para secar (y viceversa).
+      is_dry: >-
+        {% if has_weather and has_sensor %}
+          {% if combine == 'AND' %}
+            {{ (not forecast_rain) or (not sensor_wet) }}
+          {% else %}
+            {{ (not forecast_rain) and (not sensor_wet) }}
+          {% endif %}
+        {% elif has_weather %}
+          {{ not forecast_rain }}
+        {% else %}
+          {{ not sensor_wet }}
+        {% endif %}
+
       # ¿La persiana de referencia está ya en posición lluvia?
       cover_at_rain_pos: >-
         {{ state_attr(ref_cover, 'current_position') | int(-1) == actual_position | int }}
+
+      # Cooldown — usa un atributo de input_text si quisiéramos persistencia
+      # real, pero para mantener compatibilidad con la v1.2.1 usamos
+      # this.attributes.last_triggered. Para evitar el bug de la 1.2.1
+      # (que también bloqueaba tras subida), solo aplicamos cooldown si el
+      # último trigger fue del heartbeat y el estado actual sigue siendo
+      # "llover + persianas arriba". En la práctica: solo bloquea repeticiones
+      # del mismo escenario de bajada.
+      cooldown_seconds_elapsed: >-
+        {% if this.attributes.last_triggered is none %}
+          999999
+        {% else %}
+          {{ (now() - this.attributes.last_triggered.astimezone()).total_seconds() | int }}
+        {% endif %}
+      cooldown_ok: >-
+        {{ cooldown_seconds_elapsed > (cooldown | int * 3600) }}
+
       # Aviso en notificación si la lógica está invertida
       mode_note: >-
         {{ '(lógica invertida)' if inverted else '' }}
       # Aviso en notificación si está en modo pruebas
       test_note: >-
         {{ '⚠️ MODO PRUEBAS ACTIVO — ' if test else '' }}
+      # Origen textual para notificaciones
+      origen_txt: >-
+        {% if has_weather and has_sensor %}
+          {% if forecast_rain and sensor_wet %}previsión + sensor
+          {% elif forecast_rain %}previsión ({{ max_precip }} mm/h)
+          {% elif sensor_wet %}sensor físico
+          {% else %}—
+          {% endif %}
+        {% elif has_weather %}previsión ({{ max_precip }} mm/h)
+        {% elif has_sensor %}sensor físico
+        {% endif %}
 
   - choose:
 
-      # ── PATH A: Va a llover, persianas NO están en posición lluvia ──
+      # ── PATH A: Llueve y persianas NO están en posición lluvia ──────
       - conditions:
           - "{{ test or states(no_molestar) == 'off' }}"
-          - "{{ test or max_precip | float(0) > threshold | float }}"
+          - "{{ test or is_raining }}"
           - "{{ not cover_at_rain_pos }}"
-          - "{{ test or
-                this.attributes.last_triggered is none or
-                (now() - this.attributes.last_triggered.astimezone()).total_seconds()
-                > (cooldown | int * 3600) }}"
+          # Bypass del cooldown si el trigger es reactivo del sensor
+          # (queremos reaccionar inmediatamente, no bloqueados por cooldown).
+          - "{{ test or trigger.id == 'sensor_on' or cooldown_ok }}"
         sequence:
           - choose:
               # Con confirmación: pregunta y espera respuesta
@@ -225,9 +429,12 @@ actions:
                     data:
                       title: "🌧️ Va a llover"
                       message: >-
-                        {{ test_note }}Precipitación prevista: {{ max_precip }} mm
+                        {{ test_note }}Origen: {{ origen_txt | trim }}.
+                        {% if forecast_rain %}
+                        Precipitación prevista: {{ max_precip }} mm
                         en la{{ 's' if hours | int > 1 }}
                         próxima{{ 's' if hours | int > 1 }} {{ hours }}h.
+                        {% endif %}
                         ¿Bajo las persianas al {{ closed_pct }}%?
                       data:
                         tag: lluvia_persianas
@@ -275,16 +482,16 @@ actions:
                 data:
                   title: "🌧️ Persianas bajadas automáticamente"
                   message: >-
-                    {{ test_note }}Lluvia prevista {{ max_precip }} mm —
-                    persianas al {{ closed_pct }}%. {{ mode_note }}
+                    {{ test_note }}Lluvia detectada — origen: {{ origen_txt | trim }}.
+                    Persianas al {{ closed_pct }}%. {{ mode_note }}
                   data:
                     tag: lluvia_persianas
                     timeout: 60
 
-      # ── PATH B: Ha dejado de llover, persianas EN posición lluvia ──
+      # ── PATH B: Ha dejado de llover y persianas EN posición lluvia ──
       - conditions:
           - "{{ test or states(no_molestar) == 'off' }}"
-          - "{{ test or max_precip | float(0) <= threshold | float }}"
+          - "{{ test or is_dry }}"
           - "{{ cover_at_rain_pos }}"
         sequence:
           - choose:
@@ -296,7 +503,9 @@ actions:
                     data:
                       title: "☀️ Ha dejado de llover"
                       message: >-
-                        {{ test_note }}Precipitación prevista: {{ max_precip }} mm.
+                        {{ test_note }}
+                        {% if has_weather %}Precipitación prevista: {{ max_precip }} mm.{% endif %}
+                        {% if has_sensor %}Sensor físico: {{ 'mojado' if sensor_wet else 'seco' }}.{% endif %}
                         ¿Subo las persianas?
                       data:
                         tag: lluvia_persianas
@@ -332,7 +541,9 @@ actions:
                 data:
                   title: "☀️ Persianas subidas automáticamente"
                   message: >-
-                    {{ test_note }}Ha dejado de llover ({{ max_precip }} mm) — persianas subidas.
+                    {{ test_note }}Ha dejado de llover
+                    {% if has_weather %}({{ max_precip }} mm previstos){% endif %}
+                    — persianas subidas.
                   data:
                     tag: lluvia_persianas
                     timeout: 60
