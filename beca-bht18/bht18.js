@@ -17,6 +17,10 @@ const ea = exposes.access;
 //   DP50 → consigna objetivo (÷10) ✓
 //
 // DPs AÑADIDOS A PARTIR DEL PDF DEL FABRICANTE (pendientes de confirmar en logs):
+//   DP2   → modo calor/frío (cold/hot) — documentado por fabricante como enum
+//           RW. Previamente considerado "no funcional vía Zigbee" tras pruebas
+//           15-17/04, pero se añade para re-validar con el mapeo oficial ahora
+//           disponible. Si en tu firmware no responde, abre issue.
 //   DP18  → límite inferior sensor suelo
 //   DP19  → calibración temperatura ambiente (±9 °C)
 //   DP32  → selección sensor (in / out / inout)
@@ -34,16 +38,10 @@ const ea = exposes.access;
 //   DP121 → protección alta
 //
 // DPs DESCARTADOS INTENCIONALMENTE:
-//   DP2   → "cold/hot": modo local del termostato, NO fiable vía Zigbee
-//           (probado 15-17/04, no responde a cambios remotos). El HVAC mode
-//           lo gestiona HA a nivel de sistema vía modo_casa → no necesario aquí.
 //   DP28  → factory reset: peligroso, no se expone
-//   DP50  → setpoint: ya mapeado (está en DPs verificados)
 //   DP101-107 → programación semanal (raw 128 bytes): formato complejo,
 //               requiere converter propio tipo thermostatScheduleDayMultiDP
 //               → se deja fuera de esta versión
-//   DP108 / DP110 → eco cool/heat temps: sólo útiles si se usa DP40 (ECO)
-//                   como modo activo. Se exponen por si se quiere experimentar.
 //
 // NOTAS IMPORTANTES:
 //   - DPs con rango ×10 (temperaturas de setpoint/ambiente): 16, 18, 34, 50, 112
@@ -77,6 +75,10 @@ const definition = {
         e.switch(),
         exposes.binary('relay_state', ea.STATE, 'ON', 'OFF')
             .withDescription('Estado del relé interno (ON=activo, OFF=inactivo) — usado como fuente de demanda en HA'),
+        exposes.enum('working_mode', ea.STATE_SET, ['hot', 'cold'])
+            .withDescription('Modo de trabajo calor/frío (DP2). Documentado por fabricante como RW, '
+                + 'pendiente de re-validar empíricamente. Si no responde en tu firmware, '
+                + 'abre issue en el repo.'),
 
         // --- Configuración de régimen ---------------------------------------
         exposes.enum('preset', ea.STATE_SET, ['manual', 'schedule'])
@@ -140,6 +142,12 @@ const definition = {
             [50,  'current_heating_setpoint',      tuya.valueConverter.divideBy10],
 
             // --- Configuración régimen (pendiente confirmar en logs) --------
+            // DP2: modo calor/frío. Fabricante: enum (cold=0x00, hot=0x01).
+            // Previamente declarado "no funcional" 15-17/04 ANTES de tener el
+            // mapeo oficial. Re-mapear ahora con codificación del PDF para
+            // revalidar. Si tras reinstalar el converter no responde a cambios
+            // (lectura o escritura), abrir issue con logs de Z2M.
+            [2,   'working_mode',                  tuya.valueConverterBasic.lookup({'cold': tuya.enum(0), 'hot': tuya.enum(1)})],
             // DP109: según fabricante es bool (0=schedule, 1=manual). Algunos
             // firmwares lo invierten — revisar al añadir.
             [109, 'preset',                        tuya.valueConverterBasic.lookup({'schedule': tuya.enum(0), 'manual': tuya.enum(1)})],
