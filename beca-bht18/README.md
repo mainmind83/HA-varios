@@ -16,14 +16,15 @@ On 2026-04-21, Becasmart shared the official *MCU SDK Quick Start Guide* for Tuy
 
 ### Comparison with other converters
 
-| Approach | Basic control | Calibration | Manual/schedule | Hysteresis | ECO mode | Floor sensor | Protections |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Generic `TS0601` converter | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Community 4-DP converter | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **This converter** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Approach | Basic control | Calibration | Manual/schedule | Hysteresis | ECO mode | Floor sensor | Protections | Native climate card |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Generic `TS0601` converter | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Community 4-DP converter | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **This converter (v2)** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ off / heat / cool |
 
 ## What it adds
 
+- **Unified `climate.system_mode`** with `off / heat / cool` — single point of control that drives DP 1 (state) and DP 2 (working mode) coherently. The native Home Assistant `climate` card with the `climate-hvac-modes` feature works out of the box.
 - **Temperature calibration** (DP 19) — ±9 °C, exposed through the native `climate` widget.
 - **Manual / weekly schedule preset** (DP 109) — fixes the common mistake of targeting DP 2.
 - **Blind spot / internal hysteresis** (DP 111) — **key when the thermostat drives a modulating heat pump**: a 1–2 °C deadzone avoids short-cycling the compressor.
@@ -33,6 +34,21 @@ On 2026-04-21, Becasmart shared the official *MCU SDK Quick Start Guide* for Tuy
 - **Frost and over-temperature protections** (DP 120, DP 121).
 - **Child lock** (DP 39) plus half/full lock mode (DP 115).
 - **Standby brightness** for day (DP 117) and night (DP 118).
+
+## Why a unified `system_mode`?
+
+The thermostat firmware splits power and operating mode across two datapoints (DP 1 = on/off, DP 2 = cold/hot). Earlier versions of this converter exposed both as independent writable entities (`switch` + `working_mode`), which led to subtle desynchronization issues:
+
+- Pressing the physical button caused `state` to update but not the derived `system_mode` (Z2M's `tuyaDatapoints` table only processes the first matching entry per DP, so a second auxiliary entry to publish the derived attribute was silently ignored).
+- Writing to `state` or `working_mode` directly from Z2M bypassed the coordination logic and left the climate `hvac_mode` stale.
+
+In v2, `climate.system_mode` becomes the **single writable entry point** for both DPs. Internally:
+
+- `system_mode = off` → DP 1 = false (DP 2 untouched)
+- `system_mode = heat` → DP 2 = `hot` + DP 1 = true
+- `system_mode = cool` → DP 2 = `cold` + DP 1 = true
+
+Reads from either DP recompute `system_mode` consistently, so any change source — physical button, Z2M frontend, HA card, automation — keeps everything in sync.
 
 ## Installation
 
@@ -61,10 +77,60 @@ Restart Zigbee2MQTT, then remove the device from Z2M and re-pair it so the new e
 
 After pairing, the device should expose in Home Assistant:
 
-- `climate.<name>` with temperature, setpoint and `local_temperature_calibration`.
-- `switch.<name>` for thermostat ON/OFF.
-- `binary_sensor.<name>_relay_state` — use this as the demand source for your heating system.
+- `climate.<name>` with temperature, setpoint, `local_temperature_calibration` and `system_mode` (`off / heat / cool`) — this is the main control entity.
+- `binary_sensor.<name>_relay_state` — the internal relay state (DP 47), useful as the demand source for your heating system.
 - A set of configuration entities: `preset`, `eco_mode`, `deadzone_temperature`, `sensor_selection`, etc.
+
+The native HA `climate` card with the `climate-hvac-modes` feature shows the off/heat/cool chips and they work bidirectionally:
+
+```yaml
+type: thermostat
+entity: climate.dormitorio_termostato
+features:
+  - type: climate-hvac-modes
+    hvac_modes:
+      - heat
+      - cool
+      - "off"
+```
+
+## Migration from v1
+
+Previous versions of this converter exposed `switch.<name>` and `select.<name>_working_mode` as independently writable entities. In v2 these are removed; the equivalent control happens through `climate.<name>.set_hvac_mode`.
+
+| v1 (old) | v2 (new) |
+| --- | --- |
+| `switch.turn_on` on `switch.<name>` | `climate.set_hvac_mode` with `hvac_mode: heat` (or `cool`) |
+| `switch.turn_off` on `switch.<name>` | `climate.set_hvac_mode` with `hvac_mode: "off"` |
+| `select.select_option` on `select.<name>_working_mode` with `option: hot` | `climate.set_hvac_mode` with `hvac_mode: heat` |
+| `select.select_option` on `select.<name>_working_mode` with `option: cold` | `climate.set_hvac_mode` with `hvac_mode: cool` |
+
+### Example — automation update
+
+Before:
+
+```yaml
+- service: switch.turn_on
+  target:
+    entity_id: switch.despacho_termostato
+- service: select.select_option
+  target:
+    entity_id: select.despacho_termostato_working_mode
+  data:
+    option: hot
+```
+
+After:
+
+```yaml
+- service: climate.set_hvac_mode
+  target:
+    entity_id: climate.despacho_termostato
+  data:
+    hvac_mode: heat
+```
+
+If you have automations that still write to the old entities, they will fail silently after the upgrade — the entities no longer exist. Search your `/config` for `switch.<name>_termostato` and `select.<name>_working_mode` references and migrate them.
 
 ## Datapoint reference
 
@@ -72,13 +138,13 @@ After pairing, the device should expose in Home Assistant:
 
 | DP | Function | Verified | Status |
 | --- | --- | --- | --- |
-| 1 | ON/OFF | April 2026 | ✅ read/write |
-| 2 | Working mode (`hot`/`cold`) | April 2026 | ✅ read/write (confirmed 24/04 after adding official mapping) |
+| 1 | ON/OFF general | April 2026 | ✅ controlled via `climate.system_mode` (off/heat/cool) |
+| 2 | Working mode (`hot`/`cold`) | April 2026 | ✅ controlled via `climate.system_mode` (heat/cool) |
 | 16 | Current temperature | April 2026 | ✅ read |
-| 47 | Relay state (`0`=ON, `1`=OFF) | April 2026 | ✅ read |
+| 47 | Relay state (`0`=ON, `1`=OFF) | April 2026 | ✅ read (exposed as `relay_state` for diagnostics) |
 | 50 | Target setpoint | April 2026 | ✅ read/write |
 
-> **Note on DP 2:** initial testing (15–17 April 2026) declared DP 2 "non-functional over Zigbee". That conclusion was wrong: the test ran without DP 2 being mapped in the converter, so Z2M silently ignored writes and couldn't decode reads. Once the official mapping (`enum: cold=0x00, hot=0x01`) was added per the manufacturer's PDF, bidirectional read/write confirmed on 24 April 2026.
+> **Note on DP 2:** initial testing (15–17 April 2026) declared DP 2 "non-functional over Zigbee". That conclusion was wrong: the test ran without DP 2 being mapped in the converter, so Z2M silently ignored writes and couldn't decode reads. Once the official mapping (`enum: cold=0x00, hot=0x01`) was added per the manufacturer's PDF, bidirectional read/write was confirmed on 24 April 2026.
 
 ### Added from the manufacturer's official PDF
 
@@ -132,6 +198,29 @@ The PDF is not republished in this repository as public redistribution permissio
 - zigbee-herdsman-converters: [src/lib/tuya.ts](https://github.com/Koenkk/zigbee-herdsman-converters/blob/master/src/lib/tuya.ts) — reference for `valueConverter` implementations
 
 Once all newly-added DPs are empirically validated, the intention is to open a PR against `zigbee-herdsman-converters` to integrate this support into the official Z2M distribution.
+
+## Changelog
+
+### v2 — 2 May 2026
+
+**Breaking change:** unified control through `climate.system_mode`.
+
+- Added: `climate.system_mode` with values `off / heat / cool`. Native HA card chips work bidirectionally.
+- Added: writes are coordinated — `system_mode = heat` sends DP 2 = hot then DP 1 = ON in a single transaction, etc.
+- Added: reads are unified — physical button, Z2M frontend, HA service calls all keep the climate state coherent.
+- Removed: `switch.<name>` (writable entity replaced by `system_mode`).
+- Removed: `select.<name>_working_mode` (writable entity replaced by `system_mode`).
+- Kept: `binary_sensor.<name>_relay_state` (DP 47) for diagnostics — it reports the internal relay contact, distinct from the on/off state, useful as a demand signal to the boiler / heat pump.
+
+See "Migration from v1" above for automation update examples.
+
+### v1 — 17 April 2026
+
+Initial public release.
+
+- Empirically verified DPs: 1, 16, 47, 50.
+- 14 additional DPs added per the manufacturer's PDF (18, 19, 32, 34, 39, 40, 108, 109, 110, 111, 112, 114, 115, 117, 118, 120, 121).
+- Note: DP 2 (working mode hot/cold) was initially declared non-functional; this was a converter mapping issue, corrected on 24 April 2026 once the official enum was added.
 
 ## License
 
