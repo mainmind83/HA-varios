@@ -27,12 +27,14 @@ logger:
 # Enable Home Assistant API
 api:
   encryption:
-    key: "XXXXX"
+    key: !secret api_encryption_key
 
 ota:
   - platform: esphome
-    password: "XXXXX"
+    password: !secret ota_password
 
+captive_portal:
+  
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
@@ -155,7 +157,7 @@ sensor:
             id: uptime_human
             # Custom C++ code to generate the result
             state: !lambda |-
-              int seconds = round(id(uptime_sensor).raw_state);
+              int seconds = round(id(uptime_sensor).get_raw_state());
               int days = seconds / (24 * 3600);
               seconds = seconds % (24 * 3600);
               int hours = seconds / 3600;
@@ -190,31 +192,45 @@ sensor:
     name: $friendly_name p term
     id: p_term
     unit_of_measurement: "%"
-    accuracy_decimals: 2
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+      - delta: 0.05
 
   - platform: template
     name: $friendly_name i term
     id: i_term
     unit_of_measurement: "%"
-    accuracy_decimals: 2
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+      - delta: 0.05
 
   - platform: template
     name: $friendly_name d term
     id: d_term
     unit_of_measurement: "%"
-    accuracy_decimals: 2
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+      - delta: 0.05
 
   - platform: template
     name: $friendly_name output value
     unit_of_measurement: "%"
     id: o_term
-    accuracy_decimals: 2
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+      - delta: 0.05
 
   - platform: template
     name: $friendly_name error value
     id: e_term
-    accuracy_decimals: 2
-    update_interval: 120s
+    accuracy_decimals: 1
+    filters:
+      - round: 1
+      - delta: 0.05
 
   - platform: template
     name: $friendly_name is in deadband
@@ -281,8 +297,8 @@ output:
       lambda: |-
         float write_val = 
           (id(manual_fan_control).state) ?
-            id(manual_fan_control).speed / 100.0:
-            write_val = state*1.0;
+            id(manual_fan_control).speed / 100.0 :
+            state * 1.0;
         id(console_fan_speed).set_level(write_val);
         id(fan_speed_pwm_voltage).publish_state(write_val*100.0);
 
